@@ -1,0 +1,88 @@
+---
+- hosts: web
+  vars:
+   db_password: password
+   server_name: curriculum
+   service_name: curriculum
+   service_version: 1.0
+   app_key: QujjaJs3fxwtnTl7FiqhEEn1ACkf7YZW
+   app_env: test
+   db_host: localhost
+   db_database: curriculum
+   db_username: curriculum
+   db_port: 3306
+   service_dir: /usr/share/nginx/{{ service_name }}
+  tasks:
+    - name: Replace line & sets "selinux" permissionz
+      become: yes
+      lineinfile: dest=/etc/sysconfig/selinux regexp="^SELINUX=" line="SELINUX=permissive"
+
+    - become: yes
+      command: setenforce 0
+      
+    - name: Installation of (EPEL) [Extended Packages for Enterprise Linux]
+      become: yes
+      yum: name=epel-release update_cache=yes state=present
+
+    - name: Installation of [nginx]
+      become: yes
+      yum: name=nginx,php,php-fpm,php-ldap,php-mbstring,php-mcrypt,php-mysql,php-phpunit-PHPUnit update_cache=yes state=present
+      register: nginx_install
+
+    - name: Composer for Directory installation
+      become: yes
+      shell: curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
+    - name: Module for Copying from nginx source to ECT folder
+      become: yes
+      copy: src=web/nginx.conf dest=/etc/nginx/nginx.conf mode=0640
+      register: nginx_conf
+
+    - name: template that injects service_name
+      become: yes
+      template: src=web/vhost.conf.j2 dest=/etc/nginx/conf.d/{{ service_name }}.conf mode=0644
+      register: vhost_conf
+
+    - name: Templates  
+      become: yes
+      template: src=web/php.ini.j2 dest=/etc/php.ini mode=0644
+      register: php_conf
+
+    - name: Module Copy from Source to Destination 
+      become: yes
+      copy: src=web/php-fpm-web.conf dest=/etc/php-fpm.d/www.conf mode=0644
+      register: php_fpm_conf
+
+    - name: Boots [nginx] after Restart
+      become: yes
+      service: name=nginx state=restarted enabled=yes
+      when: nginx_install|changed or nginx_conf|changed or vhost_conf|changed
+
+    - name: Boots [php-fpm] after Restart
+      become: yes
+      service: name=php-fpm state=restarted enabled=yes
+      when: nginx_install|changed or php_conf|changed or php_fpm_conf|changed
+
+    - name: File Attributes are Set
+      become: yes
+      file: path="{{ service_dir }}" state=directory
+
+    - name: Copy from Local Machine ; Unzip Archive
+      become: yes
+      unarchive: src=web/{{ service_name }}.tgz dest="{{ service_dir }}" mode=0755
+
+    - name: Composer Installed
+      become: yes
+      command: /usr/local/bin/composer update chdir={{ service_dir }}
+
+    - name: Permissions Changed
+      become: yes
+      command: chmod -R 0777 storage chdir="{{ service_dir }}"
+
+    - name: Permissions Changed
+      become: yes
+      command: chown -R nginx:nginx . chdir="{{ service_dir }}"
+
+    - name: Inject Service_Dir 
+      become: yes
+      template: src=web/env.j2 dest="{{ service_dir }}/.env" mode=0644 owner=nginx
